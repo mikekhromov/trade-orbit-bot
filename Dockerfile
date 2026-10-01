@@ -7,7 +7,7 @@ COPY . ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/telegram-bot ./cmd/bot
 
 FROM alpine:3.22
-RUN addgroup -S trading && adduser -S trading -G trading
+RUN apk add --no-cache ca-certificates && addgroup -S trading && adduser -S trading -G trading
 USER trading
 COPY --from=build /out/telegram-bot /usr/local/bin/telegram-bot
 EXPOSE 8081

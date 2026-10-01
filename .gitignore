@@ -1,6 +1,9 @@
 /telegram-bot
 /bin/
 /coverage.out
+.env
+.env.*
+!.env.example
 # Environment and secrets
 .env
 .env.*

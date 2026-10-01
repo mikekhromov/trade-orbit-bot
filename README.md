@@ -1,67 +1,87 @@
 # Trade Orbit Telegram bot
 
-Standalone Telegram bot service for Trade Orbit. It polls Telegram updates,
-renders charts, and calls the core API over HTTP. It does not access PostgreSQL.
+This repository owns the Telegram bot image, Compose project, and every command
+that starts or deploys the bot. It runs independently from the core API stack.
 
-## Configuration
+## Configure the bot server
 
-Set these environment variables when running the service:
-
-- `TOKEN_TG_BOT` — Telegram bot token (required)
-- `INTERNAL_SERVICE_TOKEN` — shared secret used for bot-to-API requests
-- `CORE_API_URL` — core API base URL (default `http://core-api:8080`)
-- `TELEGRAM_API_BASE_URL` — Telegram API URL (default `https://api.telegram.org`)
-- `HTTP_ADDR` — health endpoint address (default `:8081`)
-
-Keep `INTERNAL_SERVICE_TOKEN` equal to the value configured on the core API.
-Store both secrets in the deployment environment, never in this repository.
-
-## Build and test
+Install Docker Engine and Compose on the Netherlands VDS, then clone this repo
+to `/opt/trade-orbit-bot`. From that checkout, create the environment file:
 
 ```bash
-go test ./...
-go vet ./...
-go build ./cmd/bot
-docker build -t trade-orbit/telegram-bot:current .
+git clone git@github.com:mikekhromov/trade-orbit-bot.git /opt/trade-orbit-bot
+cd /opt/trade-orbit-bot
+cp .env.example .env
+chmod 600 .env
+nano .env
 ```
 
-## Выкладка на сервер
+Set these values:
 
-Бот использует общий Docker Compose и сеть с `core-api`. Сначала разверни
-основной стек из репозитория `trading/apps`. На сервере должны быть файлы
-`/opt/trade-orbit/compose.yaml` и `/opt/trade-orbit/.env`.
+- `TOKEN_TG_BOT` — token from BotFather.
+- `CORE_API_URL` — core API address reachable from the bot server, such as
+  `http://CORE_SERVER_IP:8080` for the current pilot.
+- `INTERNAL_SERVICE_TOKEN` — the same secret configured for the core API.
+- `TELEGRAM_API_BASE_URL` — keep `https://api.telegram.org`.
+- The health endpoint listens on the internal container address `:8081`; it is
+  not published on the host.
 
-В серверном `.env` задай `TOKEN_TG_BOT` и `INTERNAL_SERVICE_TOKEN`. Значение
-`INTERNAL_SERVICE_TOKEN` должно совпадать с настроенным для core API. Не копируй
-`.env` в репозиторий и не передавай его в командной строке.
+Because the bot and API are on different servers, `http://core-api:8080` will
+not resolve. For the current pilot, set `CORE_API_URL` to the core server's
+public address. In the API repository's `.env`, set
+`CORE_API_BIND_ADDRESS=0.0.0.0`, redeploy the API, and restrict inbound TCP
+port `8080` in the provider firewall to the bot server's fixed public IP.
+Use the same strong, randomly generated `INTERNAL_SERVICE_TOKEN` in both
+repositories; the bot sends it as a Bearer token to `/internal/v1/*` routes.
 
-На машине, с которой выкладываешь проект, проверь SSH-доступ к серверу и запусти:
+This pilot sends that token over plain HTTP. Keep the source-IP firewall rule;
+HTTPS transport is deferred and recorded in OpenSpec in the core repository.
+
+## Run on the bot server
+
+From the bot checkout on the Netherlands VDS, after configuring `.env`, run:
+
+```bash
+make start
+```
+
+This builds and starts only `telegram-bot`, then waits for its healthcheck.
+Other commands from the repository root:
+
+```bash
+make status
+make logs
+make restart
+make stop
+make test
+make lint
+```
+
+`make logs` follows the log stream; press Ctrl-C to stop following logs without
+stopping the bot. The health endpoint is not published on a host port.
+
+## Deploy from a development machine
+
+The deploy command transfers the bot image and Compose file over SSH. The target
+must already have Docker Compose and `/opt/trade-orbit-bot/.env` configured:
 
 ```bash
 cd ~/Documents/code/trading/bot
-go test ./...
-DEPLOY_TARGET=root@SERVER_IP ./shell-tools/deploy.sh
+DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP make deploy
 ```
 
-Скрипт собирает образ для `linux/amd64`, передаёт его серверу через SSH и
-пересоздаёт только `telegram-bot`, ожидая успешного healthcheck. Для ARM-сервера
-задай `DEPLOY_PLATFORM=linux/arm64`. Путь по умолчанию — `/opt/trade-orbit`;
-его можно изменить переменной `DEPLOY_PATH`.
-
-Проверить состояние и последние логи можно так:
+The default image platform is `linux/amd64`. For an ARM server, use:
 
 ```bash
-ssh root@SERVER_IP 'cd /opt/trade-orbit && docker compose --env-file .env -f compose.yaml ps telegram-bot'
-ssh root@SERVER_IP 'cd /opt/trade-orbit && docker compose --env-file .env -f compose.yaml logs --tail=100 telegram-bot'
+DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP DEPLOY_PLATFORM=linux/arm64 make deploy
 ```
 
-Скрипт печатает использованный release tag. Чтобы откатить бота к предыдущему
-образу, выполни на сервере:
+The deploy script prints the release tag after a successful healthcheck. To
+roll back to a previously deployed tag:
 
 ```bash
-cd /opt/trade-orbit
-./rollback.sh telegram-bot RELEASE_TAG
+DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP make rollback TAG=RELEASE_TAG
 ```
 
-Не запускай второй экземпляр с тем же `TOKEN_TG_BOT`: оба будут конкурировать
-за Telegram `getUpdates`.
+Do not run a second bot instance with the same token; both instances would
+compete for Telegram `getUpdates`.

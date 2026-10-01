@@ -1,0 +1,22 @@
+name: trade-orbit-bot
+
+services:
+  telegram-bot:
+    image: trade-orbit/telegram-bot:${IMAGE_TAG:-current}
+    restart: unless-stopped
+    environment:
+      TOKEN_TG_BOT: ${TOKEN_TG_BOT:-}
+      CORE_API_URL: ${CORE_API_URL:-}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      TELEGRAM_API_BASE_URL: ${TELEGRAM_API_BASE_URL:-https://api.telegram.org}
+      TELEGRAM_INSECURE_SKIP_VERIFY: ${TELEGRAM_INSECURE_SKIP_VERIFY:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

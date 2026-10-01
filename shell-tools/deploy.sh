@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 DEPLOY_TARGET="${DEPLOY_TARGET:-}"
-DEPLOY_PATH="${DEPLOY_PATH:-/opt/trade-orbit}"
+DEPLOY_PATH="${DEPLOY_PATH:-/opt/trade-orbit-bot}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-linux/amd64}"
 RELEASE_TAG="${RELEASE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 [[ -n "$DEPLOY_TARGET" ]] || { echo "Set DEPLOY_TARGET, for example root@203.0.113.10." >&2; exit 2; }
@@ -10,10 +10,12 @@ RELEASE_TAG="${RELEASE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 IMAGE="trade-orbit/telegram-bot"
 
-ssh "$DEPLOY_TARGET" "cd '$DEPLOY_PATH' && test -f .env && docker compose --env-file .env -f compose.yaml config --services | grep -qx telegram-bot"
+ssh "$DEPLOY_TARGET" "mkdir -p '$DEPLOY_PATH' && test -f '$DEPLOY_PATH/.env'"
+scp "$ROOT/compose.yaml" "$DEPLOY_TARGET:$DEPLOY_PATH/compose.yaml"
+ssh "$DEPLOY_TARGET" "cd '$DEPLOY_PATH' && grep -Eq '^TOKEN_TG_BOT=.+$' .env && grep -Eq '^CORE_API_URL=.+$' .env && grep -Eq '^INTERNAL_SERVICE_TOKEN=.+$' .env && docker compose --env-file .env -f compose.yaml config --services | grep -qx telegram-bot"
 docker buildx build --platform "$DEPLOY_PLATFORM" --load -f "$ROOT/Dockerfile" \
   -t "$IMAGE:$RELEASE_TAG" -t "$IMAGE:current" "$ROOT"
 docker save "$IMAGE:$RELEASE_TAG" "$IMAGE:current" | gzip | ssh "$DEPLOY_TARGET" 'gunzip | docker load'
-ssh "$DEPLOY_TARGET" "cd '$DEPLOY_PATH' && docker compose --env-file .env -f compose.yaml up -d --no-deps --wait --wait-timeout 120 telegram-bot && docker compose --env-file .env -f compose.yaml ps telegram-bot"
+ssh "$DEPLOY_TARGET" "cd '$DEPLOY_PATH' && IMAGE_TAG=current docker compose --env-file .env -f compose.yaml up -d --no-deps --wait --wait-timeout 120 telegram-bot && docker compose --env-file .env -f compose.yaml ps telegram-bot"
 
 echo "Deployed bot image $IMAGE:$RELEASE_TAG"
