@@ -10,6 +10,10 @@ for key in TOKEN_TG_BOT CORE_API_URL INTERNAL_SERVICE_TOKEN; do
     exit 1
   }
 done
+if [[ $(id -u) -ne 0 ]] && { ! docker compose version >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; }; then
+  exec sudo env ENV_FILE="$ENV_FILE" IMAGE_TAG="${IMAGE_TAG:-current}" bash "$SCRIPT_DIR/start.sh"
+fi
+bash "$SCRIPT_DIR/install-docker.sh"
 IMAGE_TAG="${IMAGE_TAG:-current}"
 IMAGE_TAG="$IMAGE_TAG" ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/compose.sh" config --quiet
 bash "$SCRIPT_DIR/build.sh" "$IMAGE_TAG"

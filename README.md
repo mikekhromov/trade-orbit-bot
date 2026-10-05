@@ -5,8 +5,10 @@ that starts or deploys the bot. It runs independently from the core API stack.
 
 ## Configure the bot server
 
-Install Docker Engine and Compose on the Netherlands VDS, then clone this repo
-to `/opt/trade-orbit-bot`. From that checkout, create the environment file:
+Clone this repo to `/opt/trade-orbit-bot`. On supported Ubuntu and Debian
+systems, `make start` installs Docker Engine, Compose and Buildx if they are
+missing. The installer requires `sudo` access. From that checkout, create the
+environment file:
 
 ```bash
 git clone git@github.com:mikekhromov/trade-orbit-bot.git /opt/trade-orbit-bot
@@ -45,7 +47,8 @@ From the bot checkout on the Netherlands VDS, after configuring `.env`, run:
 make start
 ```
 
-This builds and starts only `telegram-bot`, then waits for its healthcheck.
+This checks Docker and its Compose plugin, installs them if needed, builds and
+starts only `telegram-bot`, then waits for its healthcheck.
 Other commands from the repository root:
 
 ```bash
