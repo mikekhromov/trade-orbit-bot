@@ -24,8 +24,15 @@ type Settings struct {
 	Configured bool   `json:"configured"`
 }
 
-type Strategy struct {
-	Symbol, ConditionType, TargetPrice, RuntimeState string
+type PairStrategy struct {
+	Name           string `json:"name"`
+	SymbolA        string `json:"symbolA"`
+	SymbolB        string `json:"symbolB"`
+	Mode           string `json:"mode"`
+	Status         string `json:"status"`
+	DataState      string `json:"dataState"`
+	DataReason     string `json:"dataReason"`
+	ExecutionState string `json:"executionState"`
 }
 
 type OutboxItem struct {
@@ -85,11 +92,11 @@ func (c *Client) SaveOffset(ctx context.Context, value int64) error {
 	return c.internal(ctx, http.MethodPut, "/internal/v1/telegram/offset", map[string]int64{"offset": value}, nil)
 }
 
-func (c *Client) Strategies(ctx context.Context) ([]Strategy, error) {
+func (c *Client) PairStrategies(ctx context.Context) ([]PairStrategy, error) {
 	var response struct {
-		Strategies []Strategy `json:"strategies"`
+		Strategies []PairStrategy `json:"strategies"`
 	}
-	err := c.public(ctx, "/api/v1/strategies", &response)
+	err := c.public(ctx, "/api/v1/pair-strategies", &response)
 	return response.Strategies, err
 }
 

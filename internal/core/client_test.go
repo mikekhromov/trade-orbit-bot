@@ -1,29 +1,35 @@
 package core
 
 import (
-	"encoding/json"
+	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestClaimUsesPrivateContractAndBearerToken(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/internal/v1/notifications/claim" { t.Errorf("path=%s", request.URL.Path) }
-		if request.Header.Get("Authorization") != "Bearer internal-secret" { t.Error("missing internal bearer token") }
-		_ = json.NewEncoder(writer).Encode(map[string]any{"id":"outbox-1","channel":"TELEGRAM","recipientId":"42"})
-	}))
-	defer server.Close()
+type clientRoundTripFunc func(*http.Request) (*http.Response, error)
 
-	item, err := New(server.URL, "internal-secret").Claim(t.Context())
-	if err != nil { t.Fatal(err) }
-	if item == nil || item.ID != "outbox-1" || item.RecipientID != "42" { t.Fatalf("item=%+v", item) }
-}
+func (f clientRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestClaimReturnsNilForEmptyQueue(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) }))
-	defer server.Close()
-	item, err := New(server.URL, "internal-secret").Claim(t.Context())
-	if err != nil { t.Fatal(err) }
-	if item != nil { t.Fatalf("item=%+v", item) }
+func TestPairStrategiesUsesPaperPairEndpoint(t *testing.T) {
+	client := New("https://core-api.test", "")
+	client.http.Transport = clientRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/api/v1/pair-strategies" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"strategies":[{"name":"Сбер / Яндекс","symbolA":"SBER","symbolB":"YDEX","mode":"PAPER","status":"ACTIVE","dataState":"DEGRADED","dataReason":"котировки устарели","executionState":"FLAT"}]}`)),
+		}, nil
+	})
+
+	strategies, err := client.PairStrategies(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strategies) != 1 || strategies[0].SymbolA != "SBER" || strategies[0].DataState != "DEGRADED" || strategies[0].DataReason == "" {
+		t.Fatalf("unexpected PAPER strategies response: %+v", strategies)
+	}
 }

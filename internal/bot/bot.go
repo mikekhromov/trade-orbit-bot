@@ -216,22 +216,46 @@ func (b *Bot) handle(ctx context.Context, value update) {
 		}
 		_ = b.sendMessage(ctx, chatID, "Уведомления Trade Orbit отключены. Для повторного подключения используйте /start.")
 	case "/status":
-		settings, _ := b.core.Settings(ctx)
-		items, _ := b.core.Strategies(ctx)
+		settings, err := b.core.Settings(ctx)
+		if err != nil {
+			log.Printf("telegram status settings: %v", err)
+			_ = b.sendMessage(ctx, chatID, "Не удалось получить состояние Trade Orbit. Попробуйте позже.")
+			return
+		}
+		items, err := b.core.PairStrategies(ctx)
+		if err != nil {
+			log.Printf("telegram status strategies: %v", err)
+			_ = b.sendMessage(ctx, chatID, "Не удалось получить состояние PAPER-стратегий. Попробуйте позже.")
+			return
+		}
 		state := "отключён"
 		if settings.Enabled {
 			state = "подключён"
 		}
-		_ = b.sendMessage(ctx, chatID, fmt.Sprintf("Trade Orbit работает.\nTelegram: %s\nСтратегий: %d", state, len(items)))
+		_ = b.sendMessage(ctx, chatID, fmt.Sprintf("Trade Orbit работает.\nTelegram: %s\nPAPER-стратегий: %d", state, len(items)))
 	case "/strategies":
-		items, _ := b.core.Strategies(ctx)
-		lines := []string{"Стратегии Trade Orbit:"}
+		items, err := b.core.PairStrategies(ctx)
+		if err != nil {
+			log.Printf("telegram strategies: %v", err)
+			_ = b.sendMessage(ctx, chatID, "Не удалось получить PAPER-стратегии. Попробуйте позже.")
+			return
+		}
+		lines := []string{"PAPER-стратегии Trade Orbit:"}
 		for _, item := range items {
-			sign := "≥"
-			if item.ConditionType == "PRICE_BELOW" {
-				sign = "≤"
+			state := item.DataState
+			switch item.DataState {
+			case "WARMING_UP":
+				state = "прогрев данных"
+			case "READY":
+				state = "данные готовы"
+			case "DEGRADED":
+				state = "данные недоступны"
 			}
-			lines = append(lines, fmt.Sprintf("• %s: %s %s · %s", item.Symbol, sign, item.TargetPrice, item.RuntimeState))
+			line := fmt.Sprintf("• %s — %s / %s · %s", item.Name, item.SymbolA, item.SymbolB, state)
+			if item.DataReason != "" {
+				line += ": " + item.DataReason
+			}
+			lines = append(lines, line)
 		}
 		if len(items) == 0 {
 			lines = append(lines, "Активных стратегий пока нет.")
