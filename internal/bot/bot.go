@@ -351,10 +351,26 @@ func (b *Bot) handle(ctx context.Context, value update) {
 	case "/help":
 		_ = b.sendMessage(ctx, chatID, helpText())
 	case "/test":
-		_ = b.sendMessage(ctx, chatID, "✅ Тестовое уведомление Trade Orbit доставлено.")
+		if err := b.sendTestChart(ctx, chatID); err != nil {
+			log.Printf("telegram test chart: %v", err)
+		}
 	default:
 		_ = b.sendMessage(ctx, chatID, "Не знаю такую команду.\n\n"+helpText())
 	}
+}
+
+func (b *Bot) sendTestChart(ctx context.Context, chatID string) error {
+	picture, err := chart.RenderZScoreSeries([]chart.Series{
+		{Name: "Демонстрационная стратегия", Values: []float64{0.3, 0.8, 1.4, 0.9, 0.2, -0.5, -1.1, -0.6, 0.1}},
+	})
+	if err != nil {
+		return b.sendMessage(ctx, chatID, "✅ Тестовое уведомление Trade Orbit доставлено, но график не удалось построить.")
+	}
+	caption := "✅ Тестовый график Trade Orbit · PAPER\nДемонстрационные данные, не реальные котировки."
+	if err := b.sendPhoto(ctx, chatID, caption, picture); err != nil {
+		return err
+	}
+	return nil
 }
 
 func helpText() string {

@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,6 +86,30 @@ func TestMorningPairNotificationIncludesCombinedChart(t *testing.T) {
 	}
 	if !photoSent || !strings.Contains(message, "Сбер / Яндекс") {
 		t.Fatalf("morning report chart was not sent: %q", message)
+	}
+}
+
+func TestTestCommandSendsChartPhoto(t *testing.T) {
+	photoSent := false
+	bot := &Bot{baseURL: "https://telegram.test", token: "test-token", http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(request.URL.Path, "/sendPhoto") {
+			t.Fatalf("unexpected Telegram endpoint: %s", request.URL.Path)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "Тестовый график Trade Orbit") || !bytes.Contains(body, []byte{0x89, 'P', 'N', 'G'}) {
+			t.Fatal("test chart photo or caption is missing")
+		}
+		photoSent = true
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`)), Header: make(http.Header)}, nil
+	})}}
+	if err := bot.sendTestChart(context.Background(), "42"); err != nil {
+		t.Fatal(err)
+	}
+	if !photoSent {
+		t.Fatal("test chart was not sent")
 	}
 }
 
