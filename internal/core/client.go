@@ -29,12 +29,19 @@ type Strategy struct {
 }
 
 type OutboxItem struct {
-	ID, ActionExecutionID, TriggerID string
-	StrategyName, Symbol             string
-	MarketPrice, TargetPrice         string
-	ConditionType, Channel           string
-	RecipientID                      string
-	Attempts                         int
+	Kind              string `json:"kind,omitempty"`
+	ID                string `json:"id"`
+	ActionExecutionID string `json:"actionExecutionId"`
+	TriggerID         string `json:"triggerId"`
+	StrategyName      string `json:"strategyName"`
+	Symbol            string `json:"symbol"`
+	MarketPrice       string `json:"marketPrice"`
+	TargetPrice       string `json:"targetPrice"`
+	ConditionType     string `json:"conditionType"`
+	Channel           string `json:"channel"`
+	RecipientID       string `json:"recipientId"`
+	Message           string `json:"message,omitempty"`
+	Attempts          int    `json:"attempts"`
 }
 
 type Candle struct {

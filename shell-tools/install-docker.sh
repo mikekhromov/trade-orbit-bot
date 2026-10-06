@@ -34,22 +34,27 @@ else
       conflicts+=("$package")
     fi
   done
-  if [[ ${#conflicts[@]} -gt 0 ]]; then
-    echo "Packages conflict with Docker's official packages: ${conflicts[*]}" >&2
-    echo "Resolve the existing Docker/container runtime installation before rerunning." >&2
-    exit 1
-  fi
-
-  echo "Installing Docker from the official apt repository for $ID ($codename)."
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y ca-certificates curl
-  if ! grep -RqsE '^[[:space:]]*(deb .*|URIs:.*)https://download\.docker\.com/linux/' /etc/apt/sources.list /etc/apt/sources.list.d; then
-    install -m 0755 -d /etc/apt/keyrings
-    curl --fail --silent --show-error --location --retry 3 \
-      "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
-    chmod 0644 /etc/apt/keyrings/docker.asc
-    cat > /etc/apt/sources.list.d/docker.sources <<EOF
+  if [[ "$ID" == ubuntu ]] && [[ "$(dpkg-query -W -f='${Status}' docker.io 2>/dev/null || true)" == "install ok installed" ]]; then
+    echo "Keeping the Ubuntu Docker Engine and installing its Compose and Buildx plugins."
+    apt-get update
+    apt-get install -y docker-compose-v2 docker-buildx
+  else
+    if [[ ${#conflicts[@]} -gt 0 ]]; then
+      echo "Packages conflict with Docker's official packages: ${conflicts[*]}" >&2
+      echo "Resolve the existing Docker/container runtime installation before rerunning." >&2
+      exit 1
+    fi
+
+    echo "Installing Docker from the official apt repository for $ID ($codename)."
+    apt-get update
+    apt-get install -y ca-certificates curl
+    if ! grep -RqsE '^[[:space:]]*(deb .*|URIs:.*)https://download\.docker\.com/linux/' /etc/apt/sources.list /etc/apt/sources.list.d; then
+      install -m 0755 -d /etc/apt/keyrings
+      curl --fail --silent --show-error --location --retry 3 \
+        "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+      chmod 0644 /etc/apt/keyrings/docker.asc
+      cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/$ID
 Suites: $codename
@@ -57,9 +62,10 @@ Components: stable
 Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
+    fi
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
 systemctl enable --now docker

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/mikekhromov/trade-orbit-bot/internal/core"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -86,5 +88,29 @@ func TestProviderErrorsDoNotExposeToken(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPairNotificationUsesPersistedMessageWithoutChartLookup(t *testing.T) {
+	var sent string
+	bot := &Bot{baseURL: "https://telegram.test", token: "test-token", http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(request.URL.Path, "/sendMessage") {
+			t.Fatalf("unexpected Telegram endpoint: %s", request.URL.Path)
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		sent = payload.Text
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`)), Header: make(http.Header)}, nil
+	})}}
+	message, err := bot.sendNotification(context.Background(), core.OutboxItem{Kind: "PAIR", RecipientID: "42", Message: "Trade Orbit · PAPER\nAAA / BBB"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message != sent || !strings.Contains(sent, "AAA / BBB") {
+		t.Fatalf("unexpected pair notification: %q", sent)
 	}
 }

@@ -1,14 +1,14 @@
-# Trade Orbit Telegram bot
+# Telegram-бот Trade Orbit
 
-This repository owns the Telegram bot image, Compose project, and every command
-that starts or deploys the bot. It runs independently from the core API stack.
+Этот репозиторий содержит образ Telegram-бота, Compose-проект и команды
+сборки, запуска и развёртывания. Бот работает отдельно от стека Core API.
 
-## Configure the bot server
+## Настройка сервера бота
 
-Clone this repo to `/opt/trade-orbit-bot`. On supported Ubuntu and Debian
-systems, `make start` installs Docker Engine, Compose and Buildx if they are
-missing. The installer requires `sudo` access. From that checkout, create the
-environment file:
+Склонируйте репозиторий в `/opt/trade-orbit-bot`. На поддерживаемых версиях
+Ubuntu и Debian команда `make start` при необходимости установит Docker Engine,
+Compose и Buildx. Установщику требуется доступ через `sudo`. Создайте файл
+настроек:
 
 ```bash
 git clone git@github.com:mikekhromov/trade-orbit-bot.git /opt/trade-orbit-bot
@@ -18,38 +18,56 @@ chmod 600 .env
 nano .env
 ```
 
-Set these values:
+Укажите значения:
 
-- `TOKEN_TG_BOT` — token from BotFather.
-- `CORE_API_URL` — core API address reachable from the bot server, such as
-  `http://CORE_SERVER_IP:8080` for the current pilot.
-- `INTERNAL_SERVICE_TOKEN` — the same secret configured for the core API.
-- `TELEGRAM_API_BASE_URL` — keep `https://api.telegram.org`.
-- The health endpoint listens on the internal container address `:8081`; it is
-  not published on the host.
+- `TOKEN_TG_BOT` — токен бота от BotFather.
+- `CORE_API_URL` — адрес Core API, доступный с сервера бота, например
+  `http://CORE_API_IP:8080`.
+- `INTERNAL_SERVICE_TOKEN` — тот же секрет, что указан в `.env` Core API.
+- `TELEGRAM_API_BASE_URL` — оставьте `https://api.telegram.org`.
+- Проверка состояния слушает внутренний адрес контейнера `:8081`; порт не
+  публикуется на сервере.
 
-Because the bot and API are on different servers, `http://core-api:8080` will
-not resolve. For the current pilot, set `CORE_API_URL` to the core server's
-public address. In the API repository's `.env`, set
-`CORE_API_BIND_ADDRESS=0.0.0.0`, redeploy the API, and restrict inbound TCP
-port `8080` in the provider firewall to the bot server's fixed public IP.
-Use the same strong, randomly generated `INTERNAL_SERVICE_TOKEN` in both
-repositories; the bot sends it as a Bearer token to `/internal/v1/*` routes.
+## Связь с Core API
 
-This pilot sends that token over plain HTTP. Keep the source-IP firewall rule;
-HTTPS transport is deferred and recorded in OpenSpec in the core repository.
+Когда бот и API находятся на разных серверах, имя `core-api` не разрешается
+между ними. Укажите в `CORE_API_URL` публичный IP или доменное имя сервера API.
+В `.env` API задайте `CORE_API_BIND_ADDRESS=0.0.0.0`, затем примените настройки
+на сервере API командой `sudo bash shell-tools/start-production.sh` из корня
+репозитория API.
 
-## Run on the bot server
+В сетевом экране хостинга API разрешите TCP-порт `8080` только с фиксированного
+публичного IP сервера бота. Используйте один длинный случайный
+`INTERNAL_SERVICE_TOKEN` в обоих `.env`: бот передаёт его как Bearer-токен для
+маршрутов `/internal/v1/*`.
 
-From the bot checkout on the Netherlands VDS, after configuring `.env`, run:
+Проверьте доступность API с сервера бота:
+
+```bash
+curl -i --max-time 5 http://АДРЕС_API:8080/healthz
+```
+
+Ожидается HTTP `200`. Если соединение отклонено, проверьте bind-адрес API,
+сетевой экран и правильность `CORE_API_URL`. Если API отвечает `401` на команду
+бота, сравните `INTERNAL_SERVICE_TOKEN` в обоих `.env`.
+
+В текущем пилоте токен передаётся по незашифрованному HTTP. Сохраняйте правило
+сетевого экрана, разрешающее доступ только с IP сервера бота. Настройка HTTPS
+между серверами отложена и описана в OpenSpec репозитория API.
+
+## Запуск на сервере бота
+
+После настройки `.env` выполните из каталога бота:
 
 ```bash
 make start
 ```
 
-This checks Docker and its Compose plugin, installs them if needed, builds and
-starts only `telegram-bot`, then waits for its healthcheck.
-Other commands from the repository root:
+Команда проверит Docker и Compose, установит недостающие компоненты, соберёт
+образ и запустит только `telegram-bot`, затем дождётся успешной проверки
+состояния. Без `make` можно выполнить `bash shell-tools/start.sh`.
+
+Остальные команды из корня репозитория:
 
 ```bash
 make status
@@ -60,31 +78,42 @@ make test
 make lint
 ```
 
-`make logs` follows the log stream; press Ctrl-C to stop following logs without
-stopping the bot. The health endpoint is not published on a host port.
+Команда `make logs` показывает поток журналов; нажмите Ctrl-C, чтобы прекратить
+просмотр, не останавливая бота. Проверочный адрес контейнера не опубликован на
+сервере.
 
-## Deploy from a development machine
+Если бот отвечает «Не удалось подключить Trade Orbit», проверьте журнал:
 
-The deploy command transfers the bot image and Compose file over SSH. The target
-must already have Docker Compose and `/opt/trade-orbit-bot/.env` configured:
+```bash
+docker compose --env-file .env -f compose.yaml logs --since=10m telegram-bot
+```
+
+Сообщение `connect: connection refused` указывает на недоступный порт API;
+`401 Unauthorized` — на несовпадающие внутренние токены. Повторите `/start`
+после исправления конфигурации.
+
+## Развёртывание с компьютера разработчика
+
+Команда развёртывания передаёт образ и Compose-файл по SSH. На сервере должны
+быть Docker Compose и настроенный `/opt/trade-orbit-bot/.env`:
 
 ```bash
 cd ~/Documents/code/trading/bot
-DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP make deploy
+DEPLOY_TARGET=root@IP_СЕРВЕРА_БОТА make deploy
 ```
 
-The default image platform is `linux/amd64`. For an ARM server, use:
+По умолчанию собирается образ для `linux/amd64`. Для ARM-сервера выполните:
 
 ```bash
-DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP DEPLOY_PLATFORM=linux/arm64 make deploy
+DEPLOY_TARGET=root@IP_СЕРВЕРА_БОТА DEPLOY_PLATFORM=linux/arm64 make deploy
 ```
 
-The deploy script prints the release tag after a successful healthcheck. To
-roll back to a previously deployed tag:
+После успешной проверки состояния скрипт выводит тег выпуска. Чтобы вернуться
+к предыдущему выпуску:
 
 ```bash
-DEPLOY_TARGET=root@NETHERLANDS_SERVER_IP make rollback TAG=RELEASE_TAG
+DEPLOY_TARGET=root@IP_СЕРВЕРА_БОТА make rollback TAG=ТЕГ_ВЫПУСКА
 ```
 
-Do not run a second bot instance with the same token; both instances would
-compete for Telegram `getUpdates`.
+Не запускайте два экземпляра бота с одним токеном: они будут конкурировать за
+обновления Telegram через `getUpdates`.

@@ -141,6 +141,9 @@ func (b *Bot) RunDispatcher(ctx context.Context) {
 }
 
 func (b *Bot) sendNotification(ctx context.Context, item core.OutboxItem) (string, error) {
+	if item.Kind == "PAIR" && item.Message != "" {
+		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
+	}
 	text := fmt.Sprintf("🛰 Trade Orbit\n\nЦель достигнута\n%s · %s\nТекущая цена: %s\nЦелевой уровень: %s\nСтратегия: %s", item.Symbol, conditionLabel(item.ConditionType), item.MarketPrice, item.TargetPrice, item.StrategyName)
 	candles, err := b.core.Candles(ctx, item.Symbol)
 	if err == nil {
