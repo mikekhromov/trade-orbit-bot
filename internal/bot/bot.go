@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -142,6 +143,9 @@ func (b *Bot) RunDispatcher(ctx context.Context) {
 
 func (b *Bot) sendNotification(ctx context.Context, item core.OutboxItem) (string, error) {
 	if item.Kind == "PAIR" && item.Message != "" {
+		if item.EventType == "MORNING_REPORT" {
+			return b.sendMorningReport(ctx, item)
+		}
 		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
 	}
 	text := fmt.Sprintf("🛰 Trade Orbit\n\nЦель достигнута\n%s · %s\nТекущая цена: %s\nЦелевой уровень: %s\nСтратегия: %s", item.Symbol, conditionLabel(item.ConditionType), item.MarketPrice, item.TargetPrice, item.StrategyName)
@@ -160,6 +164,50 @@ func (b *Bot) sendNotification(ctx context.Context, item core.OutboxItem) (strin
 		log.Printf("telegram chart data fallback for %s", item.Symbol)
 	}
 	return text, b.sendMessage(ctx, item.RecipientID, text)
+}
+
+func (b *Bot) sendMorningReport(ctx context.Context, item core.OutboxItem) (string, error) {
+	strategies, err := b.core.PairStrategies(ctx)
+	if err != nil {
+		log.Printf("morning report strategies: %v", err)
+		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
+	}
+	series := make([]chart.Series, 0, len(strategies))
+	legend := make([]string, 0, len(strategies))
+	colors := []string{"🔵", "🟣", "🟢", "🟠", "🔴", "🩵"}
+	for _, strategy := range strategies {
+		if !strategy.MorningReport {
+			continue
+		}
+		data, chartErr := b.core.PairChart(ctx, strategy.ID)
+		if chartErr != nil {
+			log.Printf("morning report chart for %s: %v", strategy.ID, chartErr)
+			continue
+		}
+		values := make([]float64, 0, len(data.Points))
+		for _, point := range data.Points {
+			values = append(values, point.ZScore)
+		}
+		if len(values) == 0 {
+			continue
+		}
+		series = append(series, chart.Series{Name: strategy.Name, Values: values})
+		legend = append(legend, fmt.Sprintf("%s %s", colors[(len(series)-1)%len(colors)], strategy.Name))
+	}
+	if len(series) == 0 {
+		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
+	}
+	picture, err := chart.RenderZScoreSeries(series)
+	if err != nil {
+		log.Printf("morning report chart render: %v", err)
+		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
+	}
+	caption := item.Message + "\n\nДинамика Z-score PAPER-стратегий:\n" + strings.Join(legend, " · ")
+	if err := b.sendPhoto(ctx, item.RecipientID, caption, picture); err != nil {
+		log.Printf("morning report chart upload: %v", err)
+		return item.Message, b.sendMessage(ctx, item.RecipientID, item.Message)
+	}
+	return caption, nil
 }
 
 type update struct {
@@ -209,7 +257,7 @@ func (b *Bot) handle(ctx context.Context, value update) {
 			_ = b.sendMessage(ctx, chatID, "Trade Orbit уже привязан к другому чату. Сначала отключите его командой /stop в привязанном чате.")
 			return
 		}
-		_ = b.sendMessage(ctx, chatID, "Trade Orbit подключён. Уведомления стратегий будут приходить сюда.\n\n/status — состояние\n/strategies — стратегии\n/test — тест уведомления\n/stop — отключить")
+		_ = b.sendMessage(ctx, chatID, "Trade Orbit подключён. PAPER-уведомления будут приходить сюда.\n\n"+helpText())
 	case "/stop":
 		if err := b.core.Disable(ctx, chatID); err != nil {
 			log.Printf("telegram disable: %v", err)
@@ -232,7 +280,26 @@ func (b *Bot) handle(ctx context.Context, value update) {
 		if settings.Enabled {
 			state = "подключён"
 		}
-		_ = b.sendMessage(ctx, chatID, fmt.Sprintf("Trade Orbit работает.\nTelegram: %s\nPAPER-стратегий: %d", state, len(items)))
+		ready, warming, degraded, open, active, paused := 0, 0, 0, 0, 0, 0
+		for _, item := range items {
+			switch item.DataState {
+			case "READY":
+				ready++
+			case "WARMING_UP":
+				warming++
+			case "DEGRADED":
+				degraded++
+			}
+			if item.ExecutionState == "OPEN" {
+				open++
+			}
+			if item.Status == "ACTIVE" {
+				active++
+			} else if item.Status == "PAUSED" {
+				paused++
+			}
+		}
+		_ = b.sendMessage(ctx, chatID, fmt.Sprintf("Trade Orbit · PAPER\nTelegram: %s\nСтратегий: %d · активных: %d · пауза: %d\nДанные: готовы %d · прогрев %d · проблемы %d\nОткрытых пар: %d", state, len(items), active, paused, ready, warming, degraded, open))
 	case "/strategies":
 		items, err := b.core.PairStrategies(ctx)
 		if err != nil {
@@ -242,18 +309,9 @@ func (b *Bot) handle(ctx context.Context, value update) {
 		}
 		lines := []string{"PAPER-стратегии Trade Orbit:"}
 		for _, item := range items {
-			state := item.DataState
-			switch item.DataState {
-			case "WARMING_UP":
-				state = "прогрев данных"
-			case "READY":
-				state = "данные готовы"
-			case "DEGRADED":
-				state = "данные недоступны"
-			}
-			line := fmt.Sprintf("• %s — %s / %s · %s", item.Name, item.SymbolA, item.SymbolB, state)
+			line := fmt.Sprintf("%s %s — %s / %s\n  %s · %s · Z %s", dataStateIcon(item.DataState), item.Name, item.SymbolA, item.SymbolB, strategyStatusLabel(item.Status), executionStateLabel(item.ExecutionState), formatZScore(item.LastZScore))
 			if item.DataReason != "" {
-				line += ": " + item.DataReason
+				line += "\n  Причина: " + item.DataReason
 			}
 			lines = append(lines, line)
 		}
@@ -261,11 +319,98 @@ func (b *Bot) handle(ctx context.Context, value update) {
 			lines = append(lines, "Активных стратегий пока нет.")
 		}
 		_ = b.sendMessage(ctx, chatID, strings.Join(lines, "\n"))
+	case "/pnl":
+		items, err := b.core.PairStrategies(ctx)
+		if err != nil {
+			log.Printf("telegram pnl strategies: %v", err)
+			_ = b.sendMessage(ctx, chatID, "Не удалось загрузить PAPER-стратегии. Попробуйте позже.")
+			return
+		}
+		if len(items) == 0 {
+			_ = b.sendMessage(ctx, chatID, "PAPER-стратегий пока нет.")
+			return
+		}
+		closedTotal, openTotal := new(big.Rat), new(big.Rat)
+		lines := []string{"Результаты PAPER:"}
+		for _, item := range items {
+			history, err := b.core.PairHistory(ctx, item.ID)
+			if err != nil {
+				log.Printf("telegram pnl history for %s: %v", item.ID, err)
+				_ = b.sendMessage(ctx, chatID, "Не удалось загрузить PnL всех стратегий. Попробуйте позже.")
+				return
+			}
+			closed := parseAmount(history.Stats.NetPnL)
+			openPnL := parseAmount(history.Stats.OpenNetPnL)
+			closedTotal.Add(closedTotal, closed)
+			openTotal.Add(openTotal, openPnL)
+			lines = append(lines, fmt.Sprintf("• %s (%s / %s)\n  Сделок: %d · win rate: %.0f%%\n  PnL закрытых: %s ₽ · открытых: %s ₽", item.Name, item.SymbolA, item.SymbolB, history.Stats.CompletedTrades, history.Stats.WinRate*100, formatSignedMoney(closed), formatSignedMoney(openPnL)))
+		}
+		total := new(big.Rat).Add(new(big.Rat).Set(closedTotal), openTotal)
+		lines = append(lines, fmt.Sprintf("Итого: закрытые %s ₽ · открытые %s ₽ · всего %s ₽", formatSignedMoney(closedTotal), formatSignedMoney(openTotal), formatSignedMoney(total)))
+		_ = b.sendMessage(ctx, chatID, strings.Join(lines, "\n"))
+	case "/help":
+		_ = b.sendMessage(ctx, chatID, helpText())
 	case "/test":
 		_ = b.sendMessage(ctx, chatID, "✅ Тестовое уведомление Trade Orbit доставлено.")
 	default:
-		_ = b.sendMessage(ctx, chatID, "Команды: /start, /status, /strategies, /test, /stop, /help")
+		_ = b.sendMessage(ctx, chatID, "Не знаю такую команду.\n\n"+helpText())
 	}
+}
+
+func helpText() string {
+	return "/status — сводка Telegram и PAPER-стратегий\n/strategies — состояние пар, Z-score и причины проблем\n/pnl — PnL закрытых и открытых PAPER-позиций\n/test — тестовое сообщение\n/stop — отключить уведомления"
+}
+
+func dataStateIcon(state string) string {
+	switch state {
+	case "READY":
+		return "🟢"
+	case "DEGRADED":
+		return "🔴"
+	default:
+		return "🟡"
+	}
+}
+
+func strategyStatusLabel(status string) string {
+	if status == "PAUSED" {
+		return "входы на паузе"
+	}
+	return "активна"
+}
+
+func executionStateLabel(state string) string {
+	if state == "OPEN" {
+		return "пара открыта"
+	}
+	return "без открытой пары"
+}
+
+func formatZScore(value *float64) string {
+	if value == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%+.2f", *value)
+}
+
+func parseAmount(value string) *big.Rat {
+	amount, ok := new(big.Rat).SetString(strings.TrimSpace(value))
+	if !ok {
+		return new(big.Rat)
+	}
+	return amount
+}
+
+func formatMoney(value *big.Rat) string {
+	return strings.ReplaceAll(value.FloatString(2), ".", ",")
+}
+
+func formatSignedMoney(value *big.Rat) string {
+	formatted := formatMoney(value)
+	if value.Sign() > 0 {
+		return "+" + formatted
+	}
+	return formatted
 }
 
 func (b *Bot) sendMessage(ctx context.Context, chatID, text string) error {

@@ -14,6 +14,11 @@ import (
 	"github.com/mikekhromov/trade-orbit-bot/internal/core"
 )
 
+type Series struct {
+	Name   string
+	Values []float64
+}
+
 func Render(candles []core.Candle, targetText, currentText string) ([]byte, error) {
 	if len(candles) == 0 {
 		return nil, errors.New("chart has no candles")
@@ -91,6 +96,56 @@ func Render(candles []core.Candle, targetText, currentText string) ([]byte, erro
 	return output.Bytes(), nil
 }
 
+func RenderZScoreSeries(series []Series) ([]byte, error) {
+	filtered := make([]Series, 0, len(series))
+	for _, item := range series {
+		if len(item.Values) > 0 {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, errors.New("chart has no z-score points")
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, 900, 420))
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.RGBA{10, 13, 17, 255}}, image.Point{}, draw.Src)
+	grid := color.RGBA{34, 41, 51, 255}
+	for _, y := range []int{40, 120, 200, 280, 360} {
+		line(canvas, 40, y, 860, y, grid)
+	}
+	palette := []color.RGBA{{87, 154, 255, 255}, {178, 126, 255, 255}, {24, 184, 154, 255}, {245, 182, 66, 255}, {240, 68, 82, 255}, {80, 205, 220, 255}}
+	maxValue := 1.0
+	maxPoints := 1
+	for _, item := range filtered {
+		maxPoints = max(maxPoints, len(item.Values))
+		for _, value := range item.Values {
+			maxValue = math.Max(maxValue, math.Abs(value))
+		}
+	}
+	maxValue *= 1.1
+	toY := func(value float64) int { return 200 - int(value/maxValue*160) }
+	for _, threshold := range []float64{-1, 1} {
+		y := toY(threshold)
+		dashed(canvas, 40, y, 860, color.RGBA{75, 84, 97, 255})
+	}
+	for index, item := range filtered {
+		shade := palette[index%len(palette)]
+		previousX, previousY := 0, 0
+		for pointIndex, value := range item.Values {
+			x := 40 + int(float64(pointIndex)*820/float64(max(maxPoints-1, 1)))
+			y := toY(value)
+			if pointIndex > 0 {
+				segment(canvas, previousX, previousY, x, y, shade)
+			}
+			previousX, previousY = x, y
+		}
+	}
+	var output bytes.Buffer
+	if err := png.Encode(&output, canvas); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
 func line(target *image.RGBA, x0, y0, x1, y1 int, shade color.Color) {
 	if x0 == x1 {
 		for y := min(y0, y1); y <= max(y0, y1); y++ {
@@ -101,6 +156,40 @@ func line(target *image.RGBA, x0, y0, x1, y1 int, shade color.Color) {
 	for x := min(x0, x1); x <= max(x0, x1); x++ {
 		target.Set(x, y0, shade)
 	}
+}
+
+func segment(target *image.RGBA, x0, y0, x1, y1 int, shade color.Color) {
+	dx, dy := abs(x1-x0), -abs(y1-y0)
+	sx, sy := 1, 1
+	if x0 > x1 {
+		sx = -1
+	}
+	if y0 > y1 {
+		sy = -1
+	}
+	err := dx + dy
+	for {
+		target.Set(x0, y0, shade)
+		if x0 == x1 && y0 == y1 {
+			return
+		}
+		twice := 2 * err
+		if twice >= dy {
+			err += dy
+			x0 += sx
+		}
+		if twice <= dx {
+			err += dx
+			y0 += sy
+		}
+	}
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 func dashed(target *image.RGBA, x0, y, x1 int, shade color.Color) {
 	for x := x0; x <= x1; x++ {

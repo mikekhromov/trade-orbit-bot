@@ -19,3 +19,16 @@ func TestRenderProducesPNG(t *testing.T) {
 		t.Fatal("renderer did not produce PNG")
 	}
 }
+
+func TestRenderZScoreSeriesProducesPNG(t *testing.T) {
+	picture, err := RenderZScoreSeries([]Series{
+		{Name: "SBER / YDEX", Values: []float64{0.2, 1.1, -0.5}},
+		{Name: "MGNT / X5", Values: []float64{-0.4, 0.3, 1.2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(picture, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatal("renderer did not produce PNG")
+	}
+}

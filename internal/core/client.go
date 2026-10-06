@@ -25,18 +25,44 @@ type Settings struct {
 }
 
 type PairStrategy struct {
-	Name           string `json:"name"`
-	SymbolA        string `json:"symbolA"`
-	SymbolB        string `json:"symbolB"`
-	Mode           string `json:"mode"`
-	Status         string `json:"status"`
-	DataState      string `json:"dataState"`
-	DataReason     string `json:"dataReason"`
-	ExecutionState string `json:"executionState"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	SymbolA        string   `json:"symbolA"`
+	SymbolB        string   `json:"symbolB"`
+	Timeframe      string   `json:"timeframe"`
+	Mode           string   `json:"mode"`
+	Status         string   `json:"status"`
+	DataState      string   `json:"dataState"`
+	DataReason     string   `json:"dataReason"`
+	ExecutionState string   `json:"executionState"`
+	LastZScore     *float64 `json:"lastZScore"`
+	MorningReport  bool     `json:"morningReport"`
+}
+
+type PairChart struct {
+	Points []PairChartPoint `json:"points"`
+}
+
+type PairChartPoint struct {
+	Time   time.Time `json:"time"`
+	ZScore float64   `json:"zScore"`
+}
+
+type PairHistory struct {
+	Stats PairStats `json:"stats"`
+}
+
+type PairStats struct {
+	CompletedTrades int     `json:"completedTrades"`
+	WinRate         float64 `json:"winRate"`
+	NetPnL          string  `json:"netPnl"`
+	OpenNetPnL      string  `json:"openNetPnl"`
 }
 
 type OutboxItem struct {
 	Kind              string `json:"kind,omitempty"`
+	StrategyID        string `json:"strategyId,omitempty"`
+	EventType         string `json:"eventType,omitempty"`
 	ID                string `json:"id"`
 	ActionExecutionID string `json:"actionExecutionId"`
 	TriggerID         string `json:"triggerId"`
@@ -98,6 +124,18 @@ func (c *Client) PairStrategies(ctx context.Context) ([]PairStrategy, error) {
 	}
 	err := c.public(ctx, "/api/v1/pair-strategies", &response)
 	return response.Strategies, err
+}
+
+func (c *Client) PairHistory(ctx context.Context, id string) (PairHistory, error) {
+	var result PairHistory
+	err := c.public(ctx, "/api/v1/pair-strategies/"+url.PathEscape(id)+"/history", &result)
+	return result, err
+}
+
+func (c *Client) PairChart(ctx context.Context, id string) (PairChart, error) {
+	var result PairChart
+	err := c.public(ctx, "/api/v1/pair-strategies/"+url.PathEscape(id)+"/chart", &result)
+	return result, err
 }
 
 func (c *Client) Candles(ctx context.Context, symbol string) ([]Candle, error) {

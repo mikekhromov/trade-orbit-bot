@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -45,6 +46,45 @@ func TestTransportErrorsDoNotExposeToken(t *testing.T) {
 				t.Fatal("timeout classification lost")
 			}
 		})
+	}
+}
+
+func TestMorningPairNotificationIncludesCombinedChart(t *testing.T) {
+	coreServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/pair-strategies":
+			_, _ = io.WriteString(w, `{"strategies":[{"id":"pair-1","name":"Сбер / Яндекс","morningReport":true},{"id":"pair-2","name":"Не включена","morningReport":false}]}`)
+		case "/api/v1/pair-strategies/pair-1/chart":
+			_, _ = io.WriteString(w, `{"points":[{"time":"2026-10-07T08:00:00Z","zScore":0.5},{"time":"2026-10-07T09:00:00Z","zScore":1.2}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer coreServer.Close()
+
+	var photoSent bool
+	bot := &Bot{baseURL: "https://telegram.test", token: "test-token", core: core.New(coreServer.URL, ""), http: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(request.URL.Path, "/sendPhoto") {
+			t.Fatalf("unexpected Telegram endpoint: %s", request.URL.Path)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "Сбер / Яндекс") || !strings.Contains(string(body), "PAPER-стратегий") {
+			t.Fatal("morning chart caption does not identify the strategy")
+		}
+		photoSent = true
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`)), Header: make(http.Header)}, nil
+	})}}
+
+	message, err := bot.sendNotification(context.Background(), core.OutboxItem{Kind: "PAIR", EventType: "MORNING_REPORT", RecipientID: "42", Message: "Утренний отчёт PAPER-стратегий"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !photoSent || !strings.Contains(message, "Сбер / Яндекс") {
+		t.Fatalf("morning report chart was not sent: %q", message)
 	}
 }
 
